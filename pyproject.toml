@@ -9,6 +9,7 @@ dependencies = [
     "google-genai>=1.65.0",
     "groq>=1.0.0",
     "ipykernel>=7.2.0",
+    "langsmith>=0.7.12",
     "openai>=2.24.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.13.1",
@@ -25,6 +26,14 @@ members = [
 
 [dependency-groups]
 dev = [
+    "fastembed>=0.4.0; sys_platform == \"linux\"",
+    "langgraph>=1.0.10",
+    "langsmith>=0.7.12",
     "matplotlib>=3.10.8",
     "qdrant-client>=1.17.0",
+    "ragas>=0.4.3",
 ]
+
+[tool.uv]
+# Require Linux x86_64 (Docker) so lockfile has wheels for containers; fastembed/onnxruntime only installed on Linux
+required-environments = [ "sys_platform == 'linux' and platform_machine == 'x86_64'" ]
