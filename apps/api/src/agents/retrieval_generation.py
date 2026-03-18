@@ -7,6 +7,7 @@ from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 import numpy as np
 from typing import Optional
 from qdrant_client.http.models import Prefetch, Document, FusionQuery
+from agents.prompts.utils.prompt_managment import prompt_template_config
 
 
 openai_client = openai.OpenAI()
@@ -130,21 +131,13 @@ def process_context(context):
 
 @traceable(name="build_prompt", run_type="prompt")
 def build_prompt(preprocessed_context, question):
-    prompt = f"""
-    You are a helpful shopping assistant that can answer questions about the product descriptions.You will be given a question and a list of product descriptions.
-    Your task is to answer the question based on the product descriptions.
-    Instructions:
-    - You need to answer the question based on the provided context only.
-    -Never use word context and refer to it as the available products
-    -As an output you need to provide:
+    template = prompt_template_config(
+        "api/prompts/retrieval_generation.yaml", "retrieval_generation"
+    )
+    prompt = template.render(
+        preprocessed_context=preprocessed_context, question=question
+    )
 
-    The answer to the question based on the context
-
-    the short description should have name of the item.
-    The answer should have detailed information about product with detailed specification in bullet points.
-    context: {preprocessed_context}
-    Question: {question}
-    """
     return prompt
 
 

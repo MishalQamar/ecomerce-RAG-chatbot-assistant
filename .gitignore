@@ -17,3 +17,5 @@ wheels/
 notebooks/
 data/
 qdrant_data/
+
+.DS_Store
