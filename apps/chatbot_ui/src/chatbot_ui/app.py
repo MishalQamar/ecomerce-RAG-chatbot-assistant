@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import json
 from chatbot_ui.core.config import config
 
 
@@ -36,6 +37,17 @@ def api_call(method, url, **kwargs):
         return False, {"message": str(e)}
 
 
+def stream_answer(query):
+    response = requests.post(
+        f"{config.API_URL}/rag/stream",
+        json={"query": query},
+        stream=True,
+        timeout=(10, 120),
+    )
+    response.raise_for_status()
+    return response
+
+
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "assistant", "content": "Hello! How can I assist you today?"}
@@ -55,33 +67,39 @@ if prompt:
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Call backend and show assistant response with spinner
+    # Call backend and stream assistant response token-by-token
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            success, response_data = api_call(
-                "post",
-                f"{config.API_URL}/rag",
-                json={"query": prompt},
-            )
-            if success and "answer" in response_data:
-                answer = response_data["answer"]
-                st.session_state.used_context = response_data.get("used_context", [])
-            else:
-                detail = response_data.get(
-                    "detail",
-                    response_data.get(
-                        "message",
-                        "Sorry, I couldn't get a response.",
-                    ),
-                )
-                answer = (
-                    detail
-                    if isinstance(detail, str)
-                    else "; ".join(d.get("msg", str(d)) for d in detail)
-                    if isinstance(detail, list)
-                    else str(detail)
-                )
-            st.markdown(answer)
+        answer_placeholder = st.empty()
+        answer = ""
+        try:
+            with st.spinner("Thinking..."):
+                response = stream_answer(prompt)
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    event = json.loads(line)
+                    event_type = event.get("type")
+                    if event_type == "token":
+                        answer += event.get("content", "")
+                        answer_placeholder.markdown(answer)
+                    elif event_type == "done":
+                        st.session_state.used_context = event.get("used_context", [])
+
+            if not answer:
+                answer = "Sorry, I couldn't get a response."
+                answer_placeholder.markdown(answer)
+        except requests.exceptions.ConnectionError:
+            answer = "Connection error. Please check your network connection."
+            answer_placeholder.markdown(answer)
+        except requests.exceptions.Timeout:
+            answer = "The request timed out. Please try again later."
+            answer_placeholder.markdown(answer)
+        except requests.exceptions.HTTPError as e:
+            answer = f"Request failed: {str(e)}"
+            answer_placeholder.markdown(answer)
+        except Exception as e:
+            answer = f"An unexpected error occurred: {str(e)}"
+            answer_placeholder.markdown(answer)
     st.session_state.messages.append({"role": "assistant", "content": answer})
 
 # Sidebar: show suggestions (now reflects latest response)

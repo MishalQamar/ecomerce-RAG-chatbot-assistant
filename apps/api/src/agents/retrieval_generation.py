@@ -5,7 +5,7 @@ import instructor
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 import numpy as np
-from typing import Optional
+from typing import Optional, Generator
 from qdrant_client.http.models import Prefetch, Document, FusionQuery
 from agents.prompts.utils.prompt_managment import prompt_template_config
 
@@ -132,7 +132,7 @@ def process_context(context):
 @traceable(name="build_prompt", run_type="prompt")
 def build_prompt(preprocessed_context, question):
     template = prompt_template_config(
-        "api/prompts/retrieval_generation.yaml", "retrieval_generation"
+        "agents/prompts/retrieval_generation.yaml", "retrieval_generation"
     )
     prompt = template.render(
         preprocessed_context=preprocessed_context, question=question
@@ -161,6 +161,24 @@ def generate_answer(prompt):
             "total_tokens": raw_response.usage.total_tokens,
         }
     return response
+
+
+@traceable(
+    name="generate_answer_stream",
+    run_type="llm",
+    metadata={"ls_provider": "openai", "ls_model_name": "gpt-4.1-mini"},
+)
+def generate_answer_stream(prompt) -> Generator[str, None, None]:
+    stream = openai_client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        stream=True,
+    )
+    for chunk in stream:
+        token = chunk.choices[0].delta.content or ""
+        if token:
+            yield token
 
 
 @traceable(name="rag_pipeline", run_type="chain")
@@ -235,3 +253,51 @@ def rag_pipeline_wrapper(question, k=5):
         "answer": result["answer"],
         "used_context": used_context,
     }
+
+
+def rag_pipeline_stream_wrapper(question, k=5):
+    qdrant_client = QdrantClient(url="http://qdrant:6333")
+    retrieved_context = retreive_data(question, qdrant_client, k)
+    preprocessed_context = process_context(retrieved_context)
+    prompt = build_prompt(preprocessed_context, question)
+    answer_stream = generate_answer_stream(prompt)
+
+    used_context = []
+    dummy_vector = np.zeros(1536).tolist()
+    ids_to_fetch = list(
+        zip(
+            retrieved_context.get("retrieved_context_ids", []),
+            retrieved_context.get("retrieved_context", []),
+        )
+    )
+
+    for ref_id, ref_description in ids_to_fetch:
+        payload = (
+            qdrant_client.query_points(
+                collection_name="Amazon-items-collection-01-hydrid-search",
+                query=dummy_vector,
+                limit=1,
+                using="text-embedding-3-small",
+                with_payload=True,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="parent_asin",
+                            match=MatchValue(value=ref_id),
+                        )
+                    ]
+                ),
+            )
+            .points[0]
+            .payload
+        )
+        used_context.append(
+            {
+                "id": ref_id,
+                "image_url": payload.get("image"),
+                "price": payload.get("price"),
+                "description": ref_description,
+            }
+        )
+
+    return {"answer_stream": answer_stream, "used_context": used_context}
